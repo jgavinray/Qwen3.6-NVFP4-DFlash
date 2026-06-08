@@ -1,52 +1,46 @@
 #!/usr/bin/env bash
-# push-ghcr.sh — Tag and push vllm-spark-omni-q36 to GitHub Container Registry.
+# Optional helper: tag and push vllm-rtx6000-qwen36-27b to GitHub Container Registry.
+#
+# You do NOT need this for local use. Run the image directly after build, or use
+# ./scripts/save-image.sh if you want a local tarball.
 #
 # Prerequisites:
-#   - GitHub PAT with `write:packages` scope, exported as GITHUB_TOKEN
-#   - GitHub username, exported as GITHUB_USER (defaults to aeon-7)
+#   export GITHUB_TOKEN=ghp_xxxxxxxxx
+#   export GITHUB_USER=<github-user>
 #
-# Usage: ./scripts/push-ghcr.sh [TAG]
+# Usage:
+#   ./scripts/push-ghcr.sh [TAG]
 set -euo pipefail
 
-TAG="${1:-v1}"
-GH_USER="${GITHUB_USER:-aeon-7}"
-LOCAL="vllm-spark-omni-q36:${TAG}"
-REMOTE="ghcr.io/${GH_USER}/vllm-spark-omni-q36:${TAG}"
-REMOTE_LATEST="ghcr.io/${GH_USER}/vllm-spark-omni-q36:latest"
+TAG="${1:-v0.1}"
+GH_USER="${GITHUB_USER:-jgavinray}"
+IMAGE="vllm-rtx6000-qwen36-27b"
+LOCAL="${IMAGE}:${TAG}"
+REMOTE="ghcr.io/${GH_USER}/${IMAGE}:${TAG}"
+REMOTE_LATEST="ghcr.io/${GH_USER}/${IMAGE}:latest"
 
-# Sanity
 if ! docker image inspect "${LOCAL}" >/dev/null 2>&1; then
   echo "ERROR: image ${LOCAL} not found locally. Run ./scripts/build.sh first." >&2
   exit 1
 fi
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  echo "ERROR: set GITHUB_TOKEN to a PAT with write:packages scope" >&2
-  echo "  export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxx" >&2
+  echo "ERROR: GHCR push is optional but requires an account/token." >&2
+  echo "For local use, run the image directly or export it with:" >&2
+  echo "  ./scripts/save-image.sh ${TAG}" >&2
+  echo "To push to GHCR, set GITHUB_TOKEN to a PAT with write:packages scope." >&2
   exit 1
 fi
 
-echo "== Pushing ${LOCAL} → ${REMOTE} =="
-
-# Login
+echo "== Pushing ${LOCAL} -> ${REMOTE} =="
 echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GH_USER}" --password-stdin
-
-# Tag + push versioned
 docker tag "${LOCAL}" "${REMOTE}"
 docker push "${REMOTE}"
-
-# Tag + push :latest
 docker tag "${LOCAL}" "${REMOTE_LATEST}"
 docker push "${REMOTE_LATEST}"
-
-# Logout (be polite)
 docker logout ghcr.io
 
 echo
 echo "== Done =="
 echo "  ${REMOTE}"
 echo "  ${REMOTE_LATEST}"
-echo
-echo "Visibility on GHCR is private by default. To make public:"
-echo "  https://github.com/users/${GH_USER}/packages/container/vllm-spark-omni-q36/settings"
-echo "  → Danger Zone → Change visibility → Public"

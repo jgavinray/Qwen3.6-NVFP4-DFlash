@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprehensive Qwen3.6-35B-A3B-heretic + DFlash benchmark on DGX Spark.
+"""Comprehensive Qwen3.6-27B + DFlash benchmark on RTX PRO 6000.
 
 Mirrors the supergemma4-26b benchmark methodology — produces a multi-section
 markdown report you can paste directly into the HF model card.
@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 import httpx
 
 DEFAULT_BASE = "http://localhost:8000/v1"
-DEFAULT_MODEL = "qwen36-fast"   # greedy alias by convention
+DEFAULT_MODEL = "qwen36-27b-fast"   # DFlash alias by convention
 
 # Mixed-domain prompts (code, math, QA, reasoning, creative)
 PROMPTS_MIXED = [
@@ -548,7 +548,7 @@ async def main():
         rag_levels = [1, 4, 16, 64]
         long_sizes = (1024, 4096, 16384, 32768)
 
-    print(f"# Qwen3.6-35B-A3B-heretic NVFP4 + DFlash — Full benchmark")
+    print(f"# Qwen3.6-27B Text NVFP4 + DFlash on RTX PRO 6000 — Full benchmark")
     print(f"# base: {args.base_url}  model: {args.model}")
     print(f"# sections: {sections}")
     print(f"# concurrency levels: {levels}")

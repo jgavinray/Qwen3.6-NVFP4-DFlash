@@ -13,11 +13,15 @@ Background:
 Idempotent — safe to run multiple times.
 """
 import sys
+import sysconfig
 from pathlib import Path
 
 
+SITE_PACKAGES = Path(sysconfig.get_paths()["purelib"])
+
+
 def patch_kv_cache_utils() -> None:
-    target = Path("/usr/local/lib/python3.12/dist-packages/vllm/v1/core/kv_cache_utils.py")
+    target = SITE_PACKAGES / "vllm/v1/core/kv_cache_utils.py"
     src = target.read_text()
     if "# kv_cache_utils_min_none_safe" in src:
         print(f"[{target.name}] already applied")
@@ -38,13 +42,14 @@ def patch_kv_cache_utils() -> None:
         "    min_block_size = min(_block_sizes) if _block_sizes else 1"
     )
     if old not in src:
-        raise RuntimeError(f"anchor not found in {target}")
+        print(f"[{target.name}] anchor not found; skipping")
+        return
     target.write_text(src.replace(old, new, 1))
     print(f"[{target.name}] applied None-safe min()")
 
 
 def patch_engine_core() -> None:
-    target = Path("/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py")
+    target = SITE_PACKAGES / "vllm/v1/engine/core.py"
     src = target.read_text()
     if "# engine_core_block_size_none_safe" in src:
         print(f"[{target.name}] already applied")
@@ -68,9 +73,7 @@ def patch_engine_core() -> None:
 
 
 def patch_gpu_model_runner() -> None:
-    target = Path(
-        "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_model_runner.py"
-    )
+    target = SITE_PACKAGES / "vllm/v1/worker/gpu_model_runner.py"
     src = target.read_text()
     if "# gpu_model_runner_block_size_none_safe" in src:
         print(f"[{target.name}] already applied")
@@ -106,9 +109,7 @@ def patch_mamba_abstract() -> None:
     """Root-cause fix: ensure MambaSpec is never constructed with block_size=None.
     Setting block_size=1 makes all downstream `block_size * X` and `X % block_size`
     arithmetic work as identity ops for Mamba/linear-attention groups."""
-    target = Path(
-        "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/mamba/abstract.py"
-    )
+    target = SITE_PACKAGES / "vllm/model_executor/layers/mamba/abstract.py"
     src = target.read_text()
     if "# mamba_abstract_block_size_default" in src:
         print(f"[{target.name}] already applied")
@@ -116,6 +117,7 @@ def patch_mamba_abstract() -> None:
 
     old = (
         "        mamba_block_size = vllm_config.cache_config.mamba_block_size\n"
+        "        assert mamba_block_size is not None\n"
         "        page_size_padded = vllm_config.cache_config.mamba_page_size_padded"
     )
     new = (

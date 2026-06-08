@@ -29,9 +29,10 @@ Fix: drop the FULL-only gate. Apply alignment for any non-NONE cudagraph mode.
 Idempotent — safe to run multiple times.
 """
 import sys
+import sysconfig
 from pathlib import Path
 
-TARGET = Path("/usr/local/lib/python3.12/dist-packages/vllm/config/compilation.py")
+TARGET = Path(sysconfig.get_paths()["purelib"]) / "vllm/config/compilation.py"
 
 src = TARGET.read_text()
 

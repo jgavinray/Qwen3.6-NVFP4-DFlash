@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Concurrency-sweep benchmark for Qwen3.6 + DFlash.
+"""Concurrency-sweep benchmark for Qwen3.6-27B + DFlash on RTX PRO 6000.
 
 Sweeps concurrent sequences (1, 2, 4, 8, 16, 32, 64, 128) and measures:
   - per-request decode tok/s
@@ -111,7 +111,7 @@ def run_concurrency(client, model, concurrency, max_tokens, runs):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--base-url", default="http://localhost:8000/v1")
-    p.add_argument("--model", default="qwen36-35b-heretic")
+    p.add_argument("--model", default="qwen36-27b-fast")
     p.add_argument("--max-tokens", type=int, default=256)
     p.add_argument("--runs", type=int, default=2, help="runs per concurrency level")
     p.add_argument(

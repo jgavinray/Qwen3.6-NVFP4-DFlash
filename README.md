@@ -1,244 +1,125 @@
-# Qwen3.6-35B-A3B-heretic NVFP4 + DFlash on DGX Spark
+# Qwen3.6-27B Text NVFP4 + DFlash on RTX PRO 6000
 
-[![Image](https://img.shields.io/badge/ghcr.io-aeon--7%2Fvllm--spark--omni--q36-blue)](https://ghcr.io/aeon-7/vllm-spark-omni-q36)
-[![Model](https://img.shields.io/badge/HuggingFace-AEON--7%2FQwen3.6--35B--A3B--heretic--NVFP4-yellow)](https://huggingface.co/AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4)
-[![Drafter](https://img.shields.io/badge/Drafter-z--lab%2FQwen3.6--35B--A3B--DFlash-orange)](https://huggingface.co/z-lab/Qwen3.6-35B-A3B-DFlash)
-[![License](https://img.shields.io/badge/License-Apache_2.0-green)](LICENSE)
-[![☕ Tips](https://img.shields.io/badge/%E2%98%95_Tips-Support_the_work-ff5e5b?style=flat)](https://github.com/AEON-7/AEON-7#-support-the-work)
+A hardware-focused deployment kit for serving a **text-only Qwen3.6-27B NVFP4**
+artifact with **DFlash speculative decoding** on **NVIDIA RTX PRO 6000
+Blackwell** (GB202 / sm_120).
 
-A production-stable deployment of **[`AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4`](https://huggingface.co/AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4)** with **[DFlash](https://github.com/z-lab/dflash)** speculative decoding on **NVIDIA DGX Spark** (GB10 / sm_121a).
+This branch ports the original DGX Spark / Qwen3.6-35B-A3B formula to a dense
+27B language-only target:
 
-> ⚠️ **READ THE REQUIREMENTS SECTION FIRST.** This image and its weights are tuned specifically for the DGX Spark (GB10 / sm_120-121 Blackwell) with PyTorch nightly cu130. It will NOT work on Hopper, Ampere, B200, or other Blackwell variants without rebuilding.
+- source-build vLLM for Blackwell sm_120
+- strip the deployment surface to language-only
+- produce a reproducible text-only NVFP4 artifact from `Qwen/Qwen3.6-27B`
+- run DFlash first, with native MTP retained only as an A/B profile
+- tune runtime knobs against RTX PRO 6000's 96 GB VRAM and 1.792 TB/s bandwidth
 
-| | |
+## Target
+
+| Component | Target |
 |---|---|
-| **Model** | `AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4` (~22 GB, multimodal preserved) |
-| **Drafter** | `z-lab/Qwen3.6-35B-A3B-DFlash` (~905 MB, public anonymous pull) |
-| **Hardware** | DGX Spark (NVIDIA GB10, 128 GB unified memory, sm_121a) |
-| **Image** | `ghcr.io/aeon-7/vllm-spark-omni-q36:v1.2` (~9 GB compressed) |
+| GPU | NVIDIA RTX PRO 6000 Blackwell, GB202, sm_120 |
+| VRAM | 96 GB GDDR7 ECC |
+| Source model | `Qwen/Qwen3.6-27B` |
+| Production artifact | self-built text-only NVFP4 checkpoint |
+| Drafter | `z-lab/Qwen3.6-27B-DFlash` |
+| Server | OpenAI-compatible vLLM on `http://localhost:8000/v1` |
+| Default profile | DFlash, 256K context, text-only |
 
----
+> The 27B DFlash drafter is gated on Hugging Face at the time this branch was
+> prepared. You must accept access and provide an authenticated HF token before
+> the DFlash profile can download or boot.
 
-## Headline performance (measured)
-
-DGX Spark, production config (`--max-num-seqs 128`, `--max-model-len 262144`,
-`--max-num-batched-tokens 65536`, DFlash spec decode `k=15`). Mixed-domain prompt
-set, `enable_thinking=false` for clean decode-rate measurement.
-
-**Single-stream decode** (greedy T=0, 10 trials):
-
-| Statistic | tok/s |
-|---|---:|
-| **Median** | **83.9** |
-| p95 | 127.5 |
-| Min | 41.1 |
-| Max | 127.5 |
-
-*Variance reflects DFlash acceptance differences across prompt classes — math/code prompts hit 127 tok/s; open-ended prompts settle around 60-90 tok/s. Decode rate climbs to ~118 tok/s at 1000-token outputs once DFlash steady-state amortizes.*
-
-**Concurrent throughput** (T=0.7 stochastic, 200-tok output, median of 3 runs):
-
-| Concurrent | Errors | Agg tok/s | Per-req decode p50 | TTFT p50 | TTFT p95 |
-|---:|---:|---:|---:|---:|---:|
-| 1   | 0 | 102.9 | 109.1 | 111 ms | 111 ms |
-| 4   | 0 | 128.1 | 48.5  | 191 ms | 191 ms |
-| 16  | 0 | 227.6 | 19.3  | 501 ms | 503 ms |
-| 64  | 0 | 310.8 | 6.9   | 1.07 s | 11.2 s |
-| **128** | 0 | **313.6** | 6.5 | 14.1 s | 46.7 s |
-
-**Zero errors across 1,200+ requests in the full benchmark.**
-
-Aggregate plateaus at ~313 tok/s from 64 concurrent — that's the GB10 compute wall on this 35B-active-3B MoE with linear-attention layers + DFlash drafter overhead. **Best concurrency for chat UX: 4-16** (TTFT < 500 ms, per-req 19-48 tok/s); **best for max throughput: 64-128**.
-
-DFlash spec-decode acceptance: **62-78% position-0**, **2.7-4.4 mean accepted tokens per target step**.
-
-Stress-tested with 22K-token prompts + multi-hour soak: **zero crashes**.
-
-Full bench results (8 sections including TTFT-by-prompt-length, decode-by-output-length, sampling, long-prompt prefill, RAG-style concurrent) on the **HF model card**: [`AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4`](https://huggingface.co/AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4#performance-benchmarks). Raw JSON + log: [`bench/qwen36_v2_2026-04-20.json`](bench/qwen36_v2_2026-04-20.json).
-
----
-
-## ⚠️ Hard Requirements (read FIRST)
-
-### Hardware (mandatory — image is purpose-built for this only)
-| Component | Required | Notes |
-|---|---|---|
-| GPU | **NVIDIA GB10** (DGX Spark only) | sm_120 / sm_121a Blackwell. Other GPUs WILL NOT WORK with the published image. |
-| Unified memory | 128 GB | Spark default |
-| Disk | 35 GB free | Image (~22 GB) + weights (~22 GB) + drafter (~1 GB) + headroom |
-
-**Image will NOT work on:**
-- H100/H200 (sm_90 — Hopper)
-- A100/A40 (sm_80 — Ampere)
-- B200/GB200 (sm_100 — different Blackwell variant; rebuild from source)
-- L40S/RTX 4090/RTX PRO 6000 (sm_89/sm_120 desktop variants — see `docs/build.md`)
-
-### Software (mandatory)
-| Component | Version | Notes |
-|---|---|---|
-| NVIDIA driver | ≥ **580.x** | `nvidia-smi` should print "NVIDIA GB10" |
-| Docker | ≥ 25.x | with `nvidia-container-toolkit` |
-| OS | Ubuntu 24.04 LTS confirmed | other Linux distros likely fine |
-
-### DFlash drafter (no auth required)
-The DFlash drafter `z-lab/Qwen3.6-35B-A3B-DFlash` is now a **public** HF repo —
-just `hf download` it directly, no token needed.
-
-> ⚠️ If you cloned the drafter before **2026-04-19**, you MUST re-pull. The earlier
-> drafter had a long-context bug that caused `cudaErrorIllegalAddress` crashes
-> after ~16K tokens. The fixed version is on HF as of 2026-04-19.
-
----
-
-## Quick start (5 commands)
+## Quick Start
 
 ```bash
-# 1. Pre-flight check — confirm anonymous pull works
-docker pull ghcr.io/aeon-7/vllm-spark-omni-q36:v1.2
+# 1. Build the RTX PRO 6000 image
+./scripts/build.sh v0.1
 
-# 2. Pull both models into the canonical layout
-sudo mkdir -p /opt/qwen36 && sudo chown $USER:$USER /opt/qwen36
-cd /opt/qwen36
+# 2. Create the model layout
+sudo mkdir -p /opt/qwen36-27b && sudo chown $USER:$USER /opt/qwen36-27b
+cd /opt/qwen36-27b
+
+# 3. Download the DFlash drafter after accepting gated access on Hugging Face
 export HF_HUB_ENABLE_HF_TRANSFER=1
-hf download AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4 --local-dir ./qwen36-nvfp4 &
-hf download z-lab/Qwen3.6-35B-A3B-DFlash         --local-dir ./qwen36-dflash &
-wait
+export HF_TOKEN=hf_xxxxxxxxx
+hf download z-lab/Qwen3.6-27B-DFlash --local-dir ./qwen36-27b-dflash
 
-# 3. Get the compose file
-curl -fsSL https://raw.githubusercontent.com/AEON-7/Qwen3.6-NVFP4-DFlash/main/examples/docker-compose.yml \
-  -o docker-compose.yml
+# 4. Build or copy the self-built text-only NVFP4 artifact here
+# Expected path:
+#   /opt/qwen36-27b/qwen36-27b-text-nvfp4
 
-# 4. Start the server (3-5 min to first "Application startup complete")
-docker compose up -d
-docker compose logs -f
+# 5. Start serving
+docker compose -f /storage03/Qwen3.6-NVFP4-DFlash/examples/docker-compose.yml up -d
+docker logs -f vllm-qwen36-27b-rtx6000
+```
 
-# 5. Smoke test (use temperature=0 for greedy → max DFlash speedup)
+Smoke test:
+
+```bash
 curl http://localhost:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen36-fast",
-    "messages": [{"role":"user","content":"What is 17 × 23?"}],
+    "model": "qwen36-27b-fast",
+    "messages": [{"role":"user","content":"Write a Python binary search."}],
     "max_tokens": 2048,
     "temperature": 0
   }'
 ```
 
-If `max_tokens` < ~1500 your response may show `content: null` with `finish_reason: "length"` — that's the model hitting max-tokens during reasoning, not a crash. See [docs/troubleshooting.md](docs/troubleshooting.md). Use ≥ 2048 for thinking-enabled requests.
+## Runtime Shape
 
-For the full step-by-step (with pre-flight + post-deploy verification), see [`docs/dgx-spark-setup.md`](docs/dgx-spark-setup.md).
+The default compose profile serves `/models/qwen36-27b` with:
 
----
+```bash
+--language-model-only
+--max-model-len 262144
+--max-num-seqs 2
+--max-num-batched-tokens 32768
+--gpu-memory-utilization 0.90
+--enable-chunked-prefill
+--enable-prefix-caching
+--reasoning-parser qwen3
+--enable-auto-tool-choice
+--tool-call-parser qwen3_coder
+--speculative-config '{"method":"dflash","model":"/models/qwen36-27b-dflash","num_speculative_tokens":15}'
+--attention-backend flash_attn
+```
 
-## What this image actually is
+The 256K profile is intentionally conservative on concurrency. Use benchmarks to
+raise `--max-num-seqs` only after confirming KV cache headroom and DFlash
+stability on your exact artifact.
 
-vLLM HEAD source-built for **CUDA 13.0 / sm_120 + PTX** (DGX Spark / GB10 / sm_121a) with the following **v1/v1.2 backport patch set**. Each entry came from a real deployment failure, but several are now legacy on newer vLLM/FlashInfer bases and are kept here so operators can tell which fixes still apply to their image.
+## Repository Map
 
-| # | Patch | What it fixes |
-|---:|---|---|
-| 1 | `register_qwen3_5_text.py` | Adds text-only `Qwen3_5MoeForCausalLM` to vLLM model registry. **Legacy for v2 multimodal weights** because they load through the canonical multimodal class, but harmless/backward-compatible for v1 text-layout weights. |
-| 2 | `patch_cuda_optional_import.py` | Wraps `import vllm._C_stable_libtorch` in `RTLD_LAZY` dlopen. Needed on older sm_120 builds where `_C_stable_libtorch` references unresolved SM100-only MXFP4 symbols. Newer vLLM builds may already export the needed stubs and can skip this. |
-| 3 | `patch_kv_cache_utils.py` (×4 sites) | Mamba/linear-attention groups could expose `block_size=None` to downstream arithmetic. Newer vLLM commits derive/validate `mamba_block_size` before these paths execute, so this is mainly an older-base backport. |
-| 4 | `patch_mrope_text_fallback.py` | Qwen3.6 declares M-RoPE in config but no model class implements `get_mrope_input_positions` in vLLM HEAD. Adds inline fallback for the canonical text-only positions (T=H=W=arange). |
-| 5 | `patch_cudagraph_align.py` | Aligns spec-decode CUDA graph capture sizes for **pure `PIECEWISE`** mode. Default `FULL_AND_PIECEWISE` spec-decode deployments already capture FULL decode graphs and have not reproduced this failure in long soaks. |
-| 6 | ENV `VLLM_TEST_FORCE_FP8_MARLIN=1` | **v1/v1.2 compatibility guard only.** Current v2 images set this to `0` and use FlashInfer CUTLASS NVFP4 successfully on GB10. Keep Marlin only for older bases or shapes that still reject CUTLASS/grouped kernels. |
-| 7 | ENV `TORCH_CUDA_ARCH_LIST="12.0+PTX"` | Build target for sm_120, runtime JITs to sm_121a on Spark. |
-| 8 | flashinfer 0.6.8 | sm_120 NVFP4 KV-cache decode kernels (PRs #2520, #2702). |
-
-All patches live in [`patches/`](patches/) and run automatically at image build time (idempotent). The [`Dockerfile`](Dockerfile) is reproducible — see [`docs/build.md`](docs/build.md).
-
-**Current v2 note:** `ghcr.io/aeon-7/vllm-spark-omni-q36:v2` and `ghcr.io/aeon-7/vllm-aeon-ultimate:qwen36-v2` bake the production GB10 defaults (`VLLM_TEST_FORCE_FP8_MARLIN=0`, `VLLM_USE_FLASHINFER_MOE_FP4=0`) and have been validated with FlashInfer CUTLASS NVFP4. `latest` intentionally remains on the v1.2 line for compatibility.
-
----
-
-## What changed in v2 (this release)
-
-Previous v1 weights had `language_model.` prefix stripped from safetensors keys to match a text-only model class — required vLLM registry + key-rename patches and was unstable in production (intermittent `cudaErrorIllegalAddress` crashes during real chat sessions).
-
-v2 (current) re-quantized from `tvall43/Qwen3.6-35B-A3B-heretic` directly with `AutoModelForImageTextToText`, preserving:
-- Full multimodal architecture (`Qwen3_5MoeForConditionalGeneration`)
-- 27-block ViT vision encoder (BF16, NVFP4-skipped)
-- Original `model.language_model.layers.X.*` key layout — vLLM's multimodal class loads natively, no prefix-strip patch needed
-- 30 linear_attention (Mamba/GDN, fp32) + 10 full_attention layers
-- 256 routed experts × 8 active + 1 shared expert per layer
-- All 122,880 per-expert NVFP4 keys (every expert calibrated)
-
-vLLM serves it via the canonical multimodal class — fewer code paths in the inference hot loop, much better stability under load. Travis ran multiple live chat sessions (Celina) without a single crash where v1 was crashing on virtually every interaction.
-
----
-
-## OpenClaw integration
-
-The compose serves **3 model aliases** for the same backend:
-- `qwen36-35b-heretic` — canonical name
-- `qwen36-fast` — intended for greedy/agentic workloads (T=0 → 78% DFlash acceptance, 117 tok/s single-stream)
-- `qwen36-deep` — intended for sampled/creative workloads (T=0.7 → low DFlash acceptance, ~50 tok/s; tradeoff for diversity)
-
-OpenClaw config (validated against actual zod schemas) is in [`docs/openclaw.md`](docs/openclaw.md). The pattern: register two model entries pointing to the same backend with different default `params.temperature`. Route per agent or per channel binding.
-
----
-
-## Documentation map
-
-| Doc | Audience |
+| Path | Purpose |
 |---|---|
-| [`docs/dgx-spark-setup.md`](docs/dgx-spark-setup.md) | **Primary deployment guide** — start here for full Spark setup |
-| [`docs/openclaw.md`](docs/openclaw.md) | OpenClaw gateway integration (validated against real zod schemas) |
-| [`docs/dflash.md`](docs/dflash.md) | DFlash speculative decoding tuning + monitoring |
-| [`docs/dtree.md`](docs/dtree.md) | Future-work — slot DTree in when z-lab releases |
-| [`docs/quantization.md`](docs/quantization.md) | Recreating the NVFP4 quantization end-to-end (including v2 recipe) |
-| [`docs/build.md`](docs/build.md) | Building the image yourself instead of pulling from GHCR |
-| [`docs/troubleshooting.md`](docs/troubleshooting.md) | Symptoms → root causes → fixes |
-| [`docs/patches.md`](docs/patches.md) | Each patch explained, with the upstream issues they address |
+| `Dockerfile` | source-builds vLLM for RTX PRO 6000 / sm_120 |
+| `examples/docker-compose.yml` | production DFlash 256K serve profile |
+| `scripts/qwen36_27b_text_nvfp4.py` | reproducible text-only NVFP4 artifact recipe |
+| `scripts/bench_full.py` | multi-section benchmark suite |
+| `scripts/bench_concurrency.py` | focused concurrency sweep |
+| `scripts/save-image.sh` | optional local Docker image tar export |
+| `docs/quantization.md` | artifact build details |
+| `docs/dflash.md` | DFlash setup, tuning, and failure modes |
+| `docs/troubleshooting.md` | runtime triage |
 
----
+## Performance Work
 
-## Credits
+This branch is configured for benchmark-driven tuning. The expected validation
+loop is:
 
-- **vLLM** — [vllm-project/vllm](https://github.com/vllm-project/vllm)
-- **DFlash** — [z-lab/dflash](https://github.com/z-lab/dflash) (Soroush Mohri et al.)
-- **Qwen3.6-35B-A3B-heretic base** — [tvall43/Qwen3.6-35B-A3B-heretic](https://huggingface.co/tvall43/Qwen3.6-35B-A3B-heretic) (`heretic v1.2.0` abliteration of unsloth/Qwen3.6-35B-A3B)
-- **Qwen3.6** — [Qwen team](https://github.com/QwenLM)
-- **llmcompressor** — [vllm-project/llm-compressor](https://github.com/vllm-project/llm-compressor)
-- **FlashInfer** — [flashinfer-ai/flashinfer](https://github.com/flashinfer-ai/flashinfer)
-- **rmagur1203/vllm-dgx-spark** — independent 4-day SM121 investigation that surfaced the Marlin requirement
-- **OpenClaw** — [openclaw/openclaw](https://github.com/openclaw/openclaw) (Peter Steinberger / @steipete)
+1. boot no-spec baseline
+2. boot DFlash default
+3. sweep DFlash depth: `5, 10, 15, 20`
+4. sweep batched tokens: `8192, 16384, 32768, 65536`
+5. sweep concurrency for the 256K profile: `1, 2, 4, 8`
+6. run long-context and soak tests before publishing numbers
+
+Raw benchmark output should be committed under `bench/` as
+`qwen36_27b_rtx6000_<date>.json`.
 
 ## License
 
-Apache 2.0 (matching upstream vLLM, FlashInfer, llmcompressor).
-The base model carries its own license — see [`tvall43/Qwen3.6-35B-A3B-heretic`](https://huggingface.co/tvall43/Qwen3.6-35B-A3B-heretic).
-
----
-
-## ☕ Support the work
-
-If this release has been useful, tips are deeply appreciated — they go directly toward more compute, more models, and more open releases.
-
-<table align="center">
-  <tr>
-    <td align="center" width="50%">
-      <strong>₿ Bitcoin (BTC)</strong><br/>
-      <img src="https://raw.githubusercontent.com/AEON-7/AEON-7/main/assets/qr/btc.png" alt="BTC QR" width="200"/><br/>
-      <sub><code>bc1q09xmzn00q4z3c5raene0f3pzn9d9pvawfm0py4</code></sub>
-    </td>
-    <td align="center" width="50%">
-      <strong>Ξ Ethereum (ETH)</strong><br/>
-      <img src="https://raw.githubusercontent.com/AEON-7/AEON-7/main/assets/qr/eth.png" alt="ETH QR" width="200"/><br/>
-      <sub><code>0x1512667F6D61454ad531d2E45C0a5d1fd82D0500</code></sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <strong>◎ Solana (SOL)</strong><br/>
-      <img src="https://raw.githubusercontent.com/AEON-7/AEON-7/main/assets/qr/sol.png" alt="SOL QR" width="200"/><br/>
-      <sub><code>DgQsjHdAnT5PNLQTNpJdpLS3tYGpVcsHQCkpoiAKsw8t</code></sub>
-    </td>
-    <td align="center" width="50%">
-      <strong>ⓜ Monero (XMR)</strong><br/>
-      <img src="https://raw.githubusercontent.com/AEON-7/AEON-7/main/assets/qr/xmr.png" alt="XMR QR" width="200"/><br/>
-      <sub><code>836XrSKw4R76vNi3QPJ5Fa9ugcyvE2cWmKSPv3AhpTNNKvqP8v5ba9JRL4Vh7UnFNjDz3E2GXZDVVenu3rkZaNdUFhjAvgd</code></sub>
-    </td>
-  </tr>
-</table>
-
-> **Ethereum L2s (Base, Arbitrum, Optimism, Polygon, etc.) and EVM-compatible tokens** can be sent to the same Ethereum address.
+Apache 2.0 for this repository. Model and drafter artifacts carry their own
+licenses and access conditions; check their Hugging Face model cards before
+redistribution.

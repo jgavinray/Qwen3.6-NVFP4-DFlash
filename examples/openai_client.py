@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal OpenAI-compatible smoke test for the deployed Qwen3.6 + DFlash server.
+"""Minimal OpenAI-compatible smoke test for the Qwen3.6-27B + DFlash server.
 
 Usage:
     python3 openai_client.py
@@ -107,7 +107,7 @@ def bench(client, model):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--base-url", default="http://localhost:8000/v1")
-    p.add_argument("--model", default="qwen36-35b-heretic")
+    p.add_argument("--model", default="qwen36-27b-fast")
     p.add_argument("--prompt", default="What is 17 × 23? Show your work.")
     p.add_argument("--max-tokens", type=int, default=512)
     p.add_argument("--no-stream", action="store_true")

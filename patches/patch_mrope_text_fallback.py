@@ -22,11 +22,10 @@ Background:
 Idempotent — safe to run multiple times.
 """
 import sys
+import sysconfig
 from pathlib import Path
 
-TARGET = Path(
-    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_model_runner.py"
-)
+TARGET = Path(sysconfig.get_paths()["purelib"]) / "vllm/v1/worker/gpu_model_runner.py"
 
 src = TARGET.read_text()
 
@@ -41,14 +40,20 @@ OLD = (
     "        assert req_state.prompt_token_ids is not None, (\n"
     "            \"M-RoPE requires prompt_token_ids to be available.\"\n"
     "        )\n"
-    "        mrope_model = cast(SupportsMRoPE, model)\n"
-    "\n"
-    "        req_state.mrope_positions, req_state.mrope_position_delta = (\n"
-    "            mrope_model.get_mrope_input_positions(\n"
-    "                req_state.prompt_token_ids,\n"
-    "                req_state.mm_features,\n"
-    "            )\n"
-    "        )"
+        "        mrope_model = cast(SupportsMRoPE, model)\n"
+        "\n"
+        "        # `prompt_embeds` is a passthrough modality (no grid_thw), models'\n"
+        "        # M-RoPE code assumes per-feature grid info, so filter it out. The\n"
+        "        # prompt_embeds positions are treated as text positions for M-RoPE.\n"
+        "        mrope_features = [\n"
+        "            f for f in req_state.mm_features if f.modality != \"prompt_embeds\"\n"
+        "        ]\n"
+        "        req_state.mrope_positions, req_state.mrope_position_delta = (\n"
+        "            mrope_model.get_mrope_input_positions(\n"
+        "                req_state.prompt_token_ids,\n"
+        "                mrope_features,\n"
+        "            )\n"
+        "        )"
 )
 
 NEW = (

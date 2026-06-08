@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make `import vllm._C_stable_libtorch` succeed on sm_120/sm_121a (GB10/DGX Spark).
+"""Make `import vllm._C_stable_libtorch` succeed on sm_120 Blackwell builds.
 
 Background: vLLM HEAD's `_C_stable_libtorch.abi3.so` references SM100-only kernels
 (`mxfp4_experts_quant`, `silu_and_mul_mxfp4_experts_quant`) used by gpt-oss MXFP4
@@ -18,9 +18,10 @@ Verified working: `torch.ops._C.cutlass_scaled_mm_supports_fp8(120) == True` aft
 Idempotent — safe to run multiple times.
 """
 import sys
+import sysconfig
 from pathlib import Path
 
-TARGET = Path("/usr/local/lib/python3.12/dist-packages/vllm/platforms/cuda.py")
+TARGET = Path(sysconfig.get_paths()["purelib"]) / "vllm/platforms/cuda.py"
 
 src = TARGET.read_text()
 
@@ -30,7 +31,7 @@ if "# stable_libtorch_lazy_dlopen" in src:
 
 OLD = "import vllm._C_stable_libtorch  # noqa"
 NEW = (
-    "# stable_libtorch_lazy_dlopen — sm_120 (GB10/DGX Spark) workaround for missing MXFP4 sm_100 kernels\n"
+    "# stable_libtorch_lazy_dlopen — sm_120 Blackwell workaround for missing MXFP4 sm_100 kernels\n"
     "import sys as _sys, os as _os\n"
     "_old_dlopen_flags = _sys.getdlopenflags()\n"
     "_sys.setdlopenflags(_os.RTLD_LAZY | _os.RTLD_GLOBAL)\n"
