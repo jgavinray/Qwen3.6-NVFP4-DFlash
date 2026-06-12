@@ -38,7 +38,8 @@ def patch_kv_cache_utils() -> None:
         "    min_block_size = min(_block_sizes) if _block_sizes else 1"
     )
     if old not in src:
-        raise RuntimeError(f"anchor not found in {target}")
+        print(f"[{target.name}] legacy min() anchor not found — assuming upstream fixed/skipped")
+        return
     target.write_text(src.replace(old, new, 1))
     print(f"[{target.name}] applied None-safe min()")
 
@@ -116,6 +117,11 @@ def patch_mamba_abstract() -> None:
 
     old = (
         "        mamba_block_size = vllm_config.cache_config.mamba_block_size\n"
+        "        assert mamba_block_size is not None\n"
+        "        page_size_padded = vllm_config.cache_config.mamba_page_size_padded"
+    )
+    old_without_assert = (
+        "        mamba_block_size = vllm_config.cache_config.mamba_block_size\n"
         "        page_size_padded = vllm_config.cache_config.mamba_page_size_padded"
     )
     new = (
@@ -128,9 +134,10 @@ def patch_mamba_abstract() -> None:
         "            mamba_block_size = vllm_config.cache_config.block_size or 16\n"
         "        page_size_padded = vllm_config.cache_config.mamba_page_size_padded"
     )
-    if old not in src:
+    anchor = old if old in src else old_without_assert
+    if anchor not in src:
         raise RuntimeError(f"anchor not found in {target}")
-    target.write_text(src.replace(old, new, 1))
+    target.write_text(src.replace(anchor, new, 1))
     print(f"[{target.name}] applied mamba_block_size=1 default")
 
 

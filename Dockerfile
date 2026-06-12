@@ -25,7 +25,8 @@
 # Push:   docker tag vllm-spark-omni-q36:v1 ghcr.io/aeon-7/vllm-spark-omni-q36:v1 && \
 #         docker push ghcr.io/aeon-7/vllm-spark-omni-q36:v1
 
-FROM ghcr.io/aeon-7/vllm-spark-gemma4-nvfp4-awq:latest
+ARG BASE_IMAGE=ghcr.io/aeon-7/vllm-spark-omni-q36:v1.2
+FROM ${BASE_IMAGE}
 
 # Build extras
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -59,9 +60,16 @@ RUN python3 -c "import torch; print(f'torch={torch.__version__} CUDA={torch.vers
     nvcc --version | tail -1 && \
     ccache --version | head -1
 
-# Clone vLLM HEAD (default branch: main)
-ARG VLLM_REF=main
-RUN git clone --depth 1 --branch ${VLLM_REF} https://github.com/vllm-project/vllm.git /workspace/vllm-src
+# Clone current upstream vLLM, then apply the rebased DFlash SWA/KV-sharing patch.
+# VLLM_REF is pinned to the current main commit validated when this branch was cut.
+ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
+ARG VLLM_REF=9bbf42be266f88a4fabc65a0c3336edc442821cf
+COPY patches/vllm-dflash-current.patch /opt/patches/vllm-dflash-current.patch
+COPY patches/vllm-dflash-current.meta /opt/patches/vllm-dflash-current.meta
+RUN git clone ${VLLM_REPO} /workspace/vllm-src && \
+    cd /workspace/vllm-src && \
+    git checkout ${VLLM_REF} && \
+    git apply /opt/patches/vllm-dflash-current.patch
 
 WORKDIR /workspace/vllm-src
 
@@ -71,10 +79,12 @@ RUN python3 use_existing_torch.py
 # Install build deps (CUDA-specific build requirements)
 RUN uv pip install --system -r requirements/build.txt 2>/dev/null || \
     uv pip install --system -r requirements/build/cuda.txt
-
 # THE BUILD — single-arch sm_120 build via --no-build-isolation (preserves torch + flashinfer)
 # Capture build log to /tmp/vllm-build.log inside image for post-mortem if needed
 RUN uv pip install --system --no-build-isolation --no-deps . 2>&1 | tee /tmp/vllm-build.log | tail -100
+
+# Runtime dependency expected by current upstream vLLM; base v1.2 image carries 0.14.0.1.
+RUN uv pip install --system --no-deps "compressed-tensors==0.17.0"
 
 # FlashInfer 0.6.8 (sm_120 NVFP4 KV decode)
 RUN uv pip install --system --no-deps \
@@ -139,6 +149,9 @@ RUN python3 -c "import vllm, flashinfer, torch; print(f'POST vLLM={vllm.__versio
 LABEL org.opencontainers.image.title="vllm-spark-omni-q36" \
       org.opencontainers.image.description="Source-built vLLM HEAD for GB10/sm_120 + DFlash + flashinfer 0.6.8 + Qwen3.6 text-only registry fix" \
       org.opencontainers.image.source="https://github.com/aeon-7/Qwen3.6-NVFP4-DFlash" \
-      org.opencontainers.image.base.name="ghcr.io/aeon-7/vllm-spark-gemma4-nvfp4-awq:latest" \
+      org.opencontainers.image.base.name="ghcr.io/aeon-7/vllm-spark-omni-q36:v1.2" \
+      org.opencontainers.image.vllm.base_ref="9bbf42be266f88a4fabc65a0c3336edc442821cf" \
+      org.opencontainers.image.vllm.dflash_patch_head="f3eafc857eee03b25fcc7698634a981f4301d924" \
+      org.opencontainers.image.vllm.dflash_source_pr="https://github.com/vllm-project/vllm/pull/40898" \
       vllm.compute_capability="sm_120+PTX" \
       vllm.target_hardware="DGX Spark / GB10 / sm_121a"

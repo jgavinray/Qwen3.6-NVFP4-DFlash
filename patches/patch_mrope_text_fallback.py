@@ -51,6 +51,29 @@ OLD = (
     "        )"
 )
 
+OLD_WITH_PROMPT_EMBEDS = (
+    "    def _init_mrope_positions(self, req_state: CachedRequestState):\n"
+    "        model = self.get_model()\n"
+    "        assert supports_mrope(model), \"M-RoPE support is not implemented.\"\n"
+    "        assert req_state.prompt_token_ids is not None, (\n"
+    "            \"M-RoPE requires prompt_token_ids to be available.\"\n"
+    "        )\n"
+    "        mrope_model = cast(SupportsMRoPE, model)\n"
+    "\n"
+    "        # `prompt_embeds` is a passthrough modality (no grid_thw), models'\n"
+    "        # M-RoPE code assumes per-feature grid info, so filter it out. The\n"
+    "        # prompt_embeds positions are treated as text positions for M-RoPE.\n"
+    "        mrope_features = [\n"
+    "            f for f in req_state.mm_features if f.modality != \"prompt_embeds\"\n"
+    "        ]\n"
+    "        req_state.mrope_positions, req_state.mrope_position_delta = (\n"
+    "            mrope_model.get_mrope_input_positions(\n"
+    "                req_state.prompt_token_ids,\n"
+    "                mrope_features,\n"
+    "            )\n"
+    "        )"
+)
+
 NEW = (
     "    def _init_mrope_positions(self, req_state: CachedRequestState):\n"
     "        # mrope_text_fallback — Qwen3.6 / qwen3_5_moe_text doesn't implement\n"
@@ -82,13 +105,14 @@ NEW = (
     "            req_state.mrope_position_delta = 0"
 )
 
-if OLD not in src:
+anchor = OLD if OLD in src else OLD_WITH_PROMPT_EMBEDS
+if anchor not in src:
     raise RuntimeError(
         f"Anchor not found in {TARGET}.\n"
         "vLLM gpu_model_runner.py layout may have changed — re-inspect with:\n"
         f"  grep -n '_init_mrope_positions' {TARGET}"
     )
 
-new_src = src.replace(OLD, NEW, 1)
+new_src = src.replace(anchor, NEW, 1)
 TARGET.write_text(new_src)
 print(f"[{TARGET.name}] applied M-RoPE text-only fallback")

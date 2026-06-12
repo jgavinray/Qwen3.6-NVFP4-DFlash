@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # build.sh — Source-build vllm-spark-omni-q36 on a DGX Spark or sm_120 host.
 #
-# Usage: ./scripts/build.sh [TAG]
-#   TAG defaults to v1.2 → produces vllm-spark-omni-q36:v1.2
+# Usage: ./scripts/build.sh [TAG] [VLLM_REF]
+#   TAG defaults to dflash-current → produces vllm-spark-omni-q36:dflash-current
+#   VLLM_REF defaults to the pinned current vLLM main commit used by patches/vllm-dflash-current.patch
 #
 # Build time: 45-75 min on Spark
 set -euo pipefail
 
-TAG="${1:-v1.2}"
+TAG="${1:-dflash-current}"
+VLLM_REF="${2:-9bbf42be266f88a4fabc65a0c3336edc442821cf}"
 IMAGE_LOCAL="vllm-spark-omni-q36:${TAG}"
 
 cd "$(dirname "$0")/.."
 
 echo "== Building ${IMAGE_LOCAL} =="
 echo "  source: ./Dockerfile"
+echo "  vllm ref: ${VLLM_REF}"
+echo "  dflash patch: patches/vllm-dflash-current.patch"
 echo "  context: $(pwd)"
 echo "  cores: $(nproc)"
 echo "  ram: $(free -g | awk 'NR==2{print $2}') GB"
@@ -33,6 +37,7 @@ echo "== Log: $LOG =="
 echo
 
 docker build \
+  --build-arg "VLLM_REF=${VLLM_REF}" \
   -t "${IMAGE_LOCAL}" \
   -f Dockerfile \
   . 2>&1 | tee "$LOG"

@@ -1,0 +1,7 @@
+base_repo=https://github.com/vllm-project/vllm.git
+base_ref=9bbf42be266f88a4fabc65a0c3336edc442821cf
+base_branch=origin/main
+rebased_branch=dflash-current
+rebased_head=f3eafc857eee03b25fcc7698634a981f4301d924
+source_pr=https://github.com/vllm-project/vllm/pull/40898
+created_utc=2026-06-12T00:06:35Z
